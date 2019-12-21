@@ -1,0 +1,159 @@
+\documentclass[12pt]{article}
+
+\input{preamble}
+
+\begin{document}
+
+\begin{flushleft}
+\textbf{Final Project} \\
+Adam Wheeler (\texttt{ajw2207}) \\
+\today
+\end{flushleft}
+\normalsize
+%\begin{abstract}
+%TODO fix
+%where the length of each $z_i$ is small compared to that of each $F_{2i}$
+%Given an estimate, $\beta_2^*$, I can estimate $z$ for \emph{every} star in survey 2, not just those that are also observed by survey 1.
+%I use this fact to estimate stellar parameters efficiently from survey 2 spectra and to remove instrumental artefacts from survey 2 spectra.
+%\end{abstract}
+%\section{Introduction}
+%A problem of active research in astronomy is how best to infer chemical abundances 
+%The traditional approach (which can also be thought of in terms of graphical models) is to physically model stellar atmospheres.
+%Unfortunately, this approach has been found to be limited by various factors, including our lack precise line strengths and the high cost of capturing non-LTE (local thermodynamic equilibrium) effects.
+%Most of these involve calibrating a function that maps stellar labels to spectra using a small number of high-quality observations, then using the that function (itself a point-estimate) to calculate point-estimates of unlabelled spectra.
+%There are other approaches as well, most typically involving using deep learning to predict stellar labels directly from spectra.
+%
+%Such approached are particularly valuable in application to low-resolution spectra, such as those of LAMOST (the Large Sky Area Multi-Object Fiber Spectroscopic Telescope) because they have very few unblended\footnote{isolated from other spectral features} lines.
+%In this work, I focus on the 
+
+\section{Introduction}
+In this work, I pursue a model that uses a high-resolution spectral survey (for our purposes, a set of spectra taken by the same instrument with the same exposure time, reduction pipeline, etc.) to learn a low-dimensional representation, $z$ of spectra from a low-resolution spectral survey.
+This scheme has the advantage that the structure of the model (detailed below) enforces that $z$ is minimally influenced by the peculiarities of either instrument.
+
+Such a low-dimensional representation of stellar spectra is very desirable.
+It might be useful to denoise\footnote{I'm not certain that I'm using this term correctly.  I'm referring to approximately projecting a spectrum onto the manifold of ``perfectly measured'' spectra by removing both shot noise and non-astrophysical structure.}
+low-$S/N$ (signal to noise ratio) spectra, or as a basis from which to infer stellar parameters directly.
+A chief use of stellar spectra is the determination of chemical abundances (roughly the logarithm of the fraction of atoms of a given element in a star's atmosphere), which are interesting in their own right, but also useful as the only observable that links a star to its birth conditions.
+\emph{Chemical tagging}, the clustering of stars in abundances space to reconstruct dissolved star clusters, is an as-yet-unrealized desideratum in the study of the Milky Way.
+One reason for the difficulty of this project is large systematic uncertainty in measured stellar abundances.
+Abundances might be more easily inferred for from a low-dimensional space, or clustering might be done directly on a projection of it.
+
+\section{Model}
+Assume there are two spectroscopic surveys of stars in the Milky Way.
+Survey 1 has high-resolution spectra, for a limited number of stars, while survey 2 has low-resolution spectra for a larger number of stars.
+Let $F^1_{1:n}, F^2_{1:n}$ be the spectra from each, for only the stars observed by both\footnote{I apologize for the }.
+Each is vector of fluxes evaluated over a fixed set of rest-frame wavelengths.
+Each $F^2_i$ has an associated error vector $E^2_i$.
+I use a model that factorizes like this:
+\begin{equation}
+    p(F^2_{1:n}, \theta_z, \theta_F| F_1) = p(\theta_z) p(\theta_F) \prod_{\mathrm{stars}~i}  p(F^2_i | \theta_z, \theta_F).
+\end{equation}
+Define $\theta_x = (\beta_x, b_x))$ to be the Jacobian and intercept of a linear function.
+Each element of each $b$ and $\beta$ is drawn from a unit normal\footnote{I realized too late that this is a bit of a silly prior for $b_F$, since the spectra have flux roughly equal to one in the absence of emission or absorption features.  $\mathcal{N}(1, 1)$ would make more sense, but I don't think error strongly effects anything in this the report.}, and the likelihood function is given by
+\begin{equation}
+    F^2_i \sim \mathcal{N}_m(\beta_F \beta_z F^1_i + b_F, E^2_i)
+\end{equation}
+where $m$ is the length of each $F^2_i$.
+($b_z$ is fixed to the zero vector because it would be redundant.)
+Here $z_i = \beta_z F^1_i$ is not instantiated as a latent variable.
+Requiring each $z_i$ (a length $c$ vector) to be determined exactly from each $F^1_i$ is what prevents it from capturing the peculiarities of survey 2.
+Since $c$ is small compared the length of each $F^1_i$ and $F^2_i$, I think this model is linear regression constrained to estimate a matrix of limited rank\footnote{I suspect that this model is already in the statistics literature.  If you know what name it goes by, I'd love to know.}.
+
+My use of a linear model is not motivated entirely by computational ease.  
+While linear models of spectra have be sub-optimal for parameter estimation, many spectral features grow roughly linearly with underlying stellar parameters so it's a reasonable place to start.
+
+\section{Data}
+In my case, survey 1 is APOGEE (data-release 15), an infrared survey of a few $ \times 10^5$ stars.
+Survey 2 is LAMOST (data-release 4 v2), an optical survey of a few $\time 10^6$ stars.
+There is no overlap in wavelength between these surveys.
+They have 3591 stars with very high $S/N$ (LAMOST \texttt{snrz} and APOGEE \texttt{SNR}) in common.
+I removed stars flagged by APOGEE as problematic, those missing pixels in their APOGEE spectrum, and those for which stellar parameters were not available (a sign that the spectrum is in some way pathological).
+This left 1109 stars.
+
+The spectra are pseudo-continuum-normalized (the blackbody emission is removed, leaving only narrow features).
+
+\section{Results}
+I calculated maximum \emph{a posteriori} (MAP) estimates of model parameters for several values of $c$ via stochastic optimization (\texttt{pytorch}'s \texttt{AdamW} implementation).
+Figure \ref{training} shows the log joint as a function of training epoch for a few $c$ values, and Figure \ref{cs} shows the resultant log joint probability of the estimated latent parameters with held-out data.
+I have only optimized ocne for each $c$ value, so much of the difference in performance between versions with small $\Delta c$ is presumably due to randomized initial conditions.
+Nevertheless, we can see that $c \gtrsim 10$ is strongly preferred, which concords nicely with theoretical expectations, since stellar atmospheres have at least a few easily observable distinct parameters.
+Generalization roughly increases with $c$ all the way up to $c=500$, the largest value I tried.  This suggests to me that a more flexible model is may be in order if the goal is for $z$ to be small (see however \S \ref{var}).
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.3\textwidth]{c2.pdf}
+    \includegraphics[width=0.3\textwidth]{c10.pdf}
+    \includegraphics[width=0.3\textwidth]{c50.pdf}
+    \caption{Log joint probability of latent parameters with training and held-out data as a functino of epoch. Continuing the optimization for 80,000 more epochs did not result in a higher joint probability. Apparently, sudden itermittent decreases are somewhat common when optimizing with \texttt{Adam} and its variants.  Despite these, convergence was still reached more quickly than when using \texttt{AdaGrad} or standard SGD. They are caused by an ``unlucky'' minibatch.  When using the whole dataset for every batch (i.e. using non-stochastic gradient ascent) they are not present.}
+    \label{training}
+\end{figure}
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.8\textwidth]{cs.pdf}
+    \caption{held-out log joint probability for MAP estimates of latent variables for various values of $c$.}
+    \label{cs}
+\end{figure}
+
+Given estimates of $\beta_F$ and $b_F$, I can investigate $p(z_i | F^2_i)$.
+%If I am willing to pretend that each $F^2_i$ is homoschedastic (and I am; it's not a bad approximation), the maximum likelihood estimate (MLE) of $z$ can be calculated very efficiently via the normal equation.
+The maximum likelihood estimate (MLE) of $z$ can be calculated very efficiently via the normal equation.
+For small $c$, the likelihood will domniate the prior and the MLE will be close to the MAP estimate.
+Figure \ref{residuals} shows the error-relative difference between heldout spectra and their reconstructed forms, $\widehat{F^2}  = \widehat{F^2}(\hat{z}(F^2))$, for $c=2, 10, 50$.
+Note that the number of very narrow deviations decreases with $c$.
+I hypothesize that these are the locations of strong lines of elements whose abundances aren't captured by $z$.
+Figure \ref{sys} shows several spectra (from the held-out set) with aberant non-stellar features that aren't present in their denoised counterparts. It works!  
+It remains to be seen if spectra denoised with this model are still suitable for a given downstream analysis, but at the very least it provides a of identifying aberant spectra.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=\textwidth]{residuals.pdf}
+    \caption{Error-relative residuals, $(F^2 - \widehat{F^2})/E^2$, for an arbitrary LAMOST spectrum for $c=2, 10, 50$.}
+    \label{residuals}
+\end{figure} 
+
+%\begin{figure}
+%\centering
+%\includegraphics[width=\textwidth]{sys.pdf}
+%\caption{}
+%\label{sys}
+%\end{figure}
+
+\section{Model variants} \label{var}
+The model presented above is simple.
+While working on this project, I trialled more sophisticated variants, but none were fruitful.
+Particularly, I sought to infer stellar labels $\ell_i$ (effective temperature, surface gravity, abundances) from each LAMOST spectrum though a model that factorizes like this:
+\begin{equation}
+    p(F^2_{1:n}, L, \theta_z, \theta_F, \theta_\ell| F_1) = p(\theta_z) p(\theta_F) p(\theta_\ell) \prod_{\mathrm{stars}~i}  p(F^2_i | \theta_z, \theta_F, F^1) p(\ell_i | \theta_z, \theta_\ell) .
+\end{equation}
+A linear model analogous to the one discussed above can predict labels, but with poor precision, even for large $c$.
+
+I also explored replacing the linear linear transformations in this model with neural networks.
+Unfortuntely, this approach didn't improve on the linear model in any way.
+I'm not surprised that the more flexible model no better at denoising spectra, but I don't understand why it completely failed to predict stellar labels (even for shallow and narrow network architecture without a huge number of weights).
+I suspect that a bug in my code is to blame.
+
+%\begin{align*}
+%\mathrm{for~each~element}~x~\mathrm{in}~\beta_z, b_z, \beta_F, b_F, \beta_\ell, ~\mathrm{and}~ b_\ell \\ 
+% \hspace{0.5in} x \sim \mathcal{N}(0, 1) \\ 
+% \mathrm{for~each~star}~i \\ 
+% \hspace{0.5in} z_i = \beta_z^T F_{1i}\\ 
+% \hspace{0.5in} F_{2i} \sim \mathcal{N}(\beta_F z + b_F) \\
+% \hspace{0.5in} \ell_{2i} \sim \mathcal{N}(\beta_\ell z + b_F) \\
+%\end{align*}
+
+\section{Future work}
+I haven't made as much progress on this project as I'd hoped.  Here are some potential directions for the future of this project.
+\begin{itemize}
+    \item More robust inference than MAP estimation.  Even if a point estimate of latent parameters is all I want, an approximation of the posterior mean obtained via variational inference may improve generalization to new data.
+    \item While more computationally expensive, modelling the measurement error of $F^1$ might result in a better inference.
+    \item A similar model could be applied to whole star clusters, which have stars of equal-to-within-the-errors abundnaces and age, but which span the gamut of mass and evolutionary stage\footnote{Star of different masses age at different rates.}.
+          A model capturing only the things that are the same for all stars in a cluster might be more effective for identifying the members of disolved clusters than chemical tagging.
+    \item There is other data to which these idea can be applied without modification.  The GALAH survey is of particular interest.
+\end{itemize}
+\end{document}
+
+%%% Local Variables:
+%%% mode: latex
+%%% TeX-master: t
+%%% End:
